@@ -1,0 +1,19 @@
+# Prod Pipeline
+# Once PR is merged, we need to update repo in Databricks
+# see: https://docs.microsoft.com/en-us/azure/databricks/dev-tools/api/latest/repos#set-up-git-automation-to-update-repos-on-merge
+
+trigger:
+- master
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- script: |
+    set -x
+    curl -n -X PATCH $(databricks_host)/api/2.0/repos/$(databricks_repo_id) \
+    -H 'Authorization: Bearer '$DATABRICKS_TOKEN \
+    -d '{"branch": "master"}'
+  env:
+    DATABRICKS_TOKEN: $(databricks_token)
+  displayName: 'Update Prod Repo in Databricks'

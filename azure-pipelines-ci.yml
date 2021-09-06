@@ -1,0 +1,77 @@
+name: 'Databricks CI'
+
+trigger:
+- features/*
+
+variables:
+  isQA: $[eq(variables['System.PullRequest.TargetBranch'], 'refs/heads/master')]
+
+jobs:
+- job: DataQuality
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+  - script: echo 'Running on QA?' $(isQA) 
+    displayName: "Print Environment"
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.9'
+  - task: configuredatabricks@0
+    inputs:
+      url: '$(databricks_host)'
+      token: '$(databricks_token)'
+  - task: guid-generator@2
+    inputs:
+      VariableName: 'unique_id'
+      GuidToUpper: false
+
+  # I'm using conditions because setting a variable using if and "System.PullRequest.TargetBranch" didn't work
+  - task: deploynotebooks@0
+    inputs:
+      notebooksFolderPath: '$(Build.SourcesDirectory)/notebooks'
+      workspaceFolder: '/CI_QA/$(unique_id)/notebooks'
+    condition: and(succeeded(), eq(variables.isQA, true))
+    displayName: "Deploy to QA"
+  - task: deploynotebooks@0
+    inputs:
+      notebooksFolderPath: '$(Build.SourcesDirectory)/notebooks'
+      workspaceFolder: '/CI_DEV/$(unique_id)/notebooks'
+    condition: and(succeeded(), eq(variables.isQA, false))
+    displayName: "Deploy to Dev"
+
+  - script: |
+      pip install nutter
+    displayName: 'Install Nutter'
+
+  - script: |
+      nutter run /CI_QA/$(unique_id)/notebooks/tests/ $CLUSTER --junit_report --recursive  || true
+    env:
+        CLUSTER: $(cluster_id_qa)
+        DATABRICKS_HOST: $(databricks_host)
+        DATABRICKS_TOKEN: $(databricks_token)
+    displayName: 'Execute Nutter QA'
+    condition: and(succeeded(), eq(variables.isQA, true))
+
+  - script: |
+      nutter run /CI_DEV/$(unique_id)/notebooks/tests/ $CLUSTER --junit_report --recursive  || true
+    env:
+        CLUSTER: $(cluster_id_dev)
+        DATABRICKS_HOST: $(databricks_host)
+        DATABRICKS_TOKEN: $(databricks_token)
+    displayName: 'Execute Nutter DEV'
+    condition: and(succeeded(), eq(variables.isQA, false))
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/test-*.xml'
+      testRunTitle: 'Publish Nutter results'
+      failTaskOnFailedTests: true
+    # condition: succeededOrFailed() # runs wether nutter failed or not
+
+- job: CodeQuality
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+    - template: template-sonar.yml
+  condition: eq(variables.isQA, false)
